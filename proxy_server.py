@@ -45,6 +45,7 @@ def proxy_playlist():
     modified_playlist = "\n".join(lines)
     response = make_response(modified_playlist)
     response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
+    response.headers["Content-Disposition"] = 'inline; filename="playlist.m3u8"'
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response
 
