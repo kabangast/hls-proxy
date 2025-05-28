@@ -1,6 +1,6 @@
 from flask import Flask, request, Response, make_response
 import requests
-from urllib.parse import urlencode, quote, urljoin
+from urllib.parse import quote, urljoin
 import re
 
 app = Flask(__name__)
@@ -13,6 +13,7 @@ HEADERS = {
 
 TOKEN = "xAXD9RCV"
 
+@app.route('/proxy.m3u8')
 @app.route('/proxy')
 def proxy_playlist():
     original_url = request.args.get("url")
@@ -43,6 +44,7 @@ def proxy_playlist():
         lines.append(line)
 
     modified_playlist = "\n".join(lines)
+
     response = make_response(modified_playlist)
     response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
     response.headers["Content-Disposition"] = 'inline; filename="playlist.m3u8"'
