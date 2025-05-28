@@ -1,11 +1,10 @@
-from flask import Flask, request, Response
+from flask import Flask, request, Response, make_response
 import requests
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode, quote, urljoin
 import re
 
 app = Flask(__name__)
 
-# Headers needed to fetch from source
 HEADERS = {
     'Referer': 'https://play.ezyproxy.xyz/',
     'Origin': 'https://play.ezyproxy.xyz',
@@ -20,36 +19,34 @@ def proxy_playlist():
     if not original_url:
         return "Missing 'url' parameter", 400
 
-    # Fetch the original .m3u8 playlist
     r = requests.get(original_url, headers=HEADERS)
     if r.status_code != 200:
         return f"Failed to fetch playlist ({r.status_code})", 502
 
     base_url = original_url.rsplit('/', 1)[0] + '/'
+    server_url = request.host_url.rstrip('/')
 
     lines = []
     for line in r.text.splitlines():
         if line.startswith("#EXT-X-KEY"):
-            # Modify AES key URI to include token
             key_match = re.search(r'URI="([^"]+)"', line)
             if key_match:
                 key_uri = key_match.group(1)
-                # Add token to key URI
                 sep = '&' if '?' in key_uri else '?'
                 key_uri += f"{sep}token={TOKEN}"
-                # Proxy the key URL through /key
-                proxy_key_url = f"/key?url={quote(key_uri, safe='')}"
+                proxy_key_url = f"{server_url}/key?url={quote(key_uri, safe='')}"
                 line = re.sub(r'URI="[^"]+"', f'URI="{proxy_key_url}"', line)
-        elif line.endswith(".ts"):
-            # Convert .ts path to full URL and then proxy through /ts
-            ts_url = base_url + line
-            proxy_ts_url = f"/ts?url={quote(ts_url, safe='')}"
+        elif line and not line.startswith("#"):
+            ts_url = urljoin(base_url, line)
+            proxy_ts_url = f"{server_url}/ts?url={quote(ts_url, safe='')}"
             line = proxy_ts_url
         lines.append(line)
 
     modified_playlist = "\n".join(lines)
-    return Response(modified_playlist, content_type='application/vnd.apple.mpegurl')
-
+    response = make_response(modified_playlist)
+    response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 @app.route('/key')
 def proxy_key():
@@ -61,8 +58,9 @@ def proxy_key():
     if r.status_code != 200:
         return f"Failed to fetch key ({r.status_code})", 502
 
-    return Response(r.content, content_type='application/octet-stream')
-
+    response = Response(r.content, content_type='application/octet-stream')
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 @app.route('/ts')
 def proxy_ts():
@@ -74,8 +72,13 @@ def proxy_ts():
     if r.status_code != 200:
         return f"Failed to fetch TS segment ({r.status_code})", 502
 
-    return Response(r.iter_content(chunk_size=8192), content_type='video/MP2T')
+    def generate():
+        for chunk in r.iter_content(chunk_size=8192):
+            yield chunk
 
+    response = Response(generate(), content_type='video/MP2T')
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
