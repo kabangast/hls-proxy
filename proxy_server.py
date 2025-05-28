@@ -17,16 +17,18 @@ TOKEN = "xAXD9RCV"
 def before_request():
     if request.method == 'OPTIONS':
         resp = app.make_default_options_response()
-        headers = resp.headers
-        headers['Access-Control-Allow-Origin'] = '*'
-        headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-        headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept'
-        return resp
+        return set_cors_headers(resp)
+
+@app.after_request
+def add_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 def set_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept'
+    response.headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept, Range'
+    response.headers['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range'
     return response
 
 @app.route('/proxy.m3u8')
@@ -51,14 +53,12 @@ def proxy_playlist():
                 key_uri = key_match.group(1)
                 sep = '&' if '?' in key_uri else '?'
                 key_uri += f"{sep}token={TOKEN}"
-                # Encode the full key URI for query safety
                 encoded_key_uri = quote(key_uri, safe='')
                 proxy_key_url = f"{server_url}/key?url={encoded_key_uri}"
                 line = re.sub(r'URI="[^"]+"', f'URI="{proxy_key_url}"', line)
         elif line and not line.startswith("#"):
             ts_url = urljoin(base_url, line)
-            # Leave TS URL mostly readable (only encode unsafe characters)
-            encoded_ts_url = quote(ts_url, safe=':/?&=')  
+            encoded_ts_url = quote(ts_url, safe=':/?&=')
             proxy_ts_url = f"{server_url}/ts?url={encoded_ts_url}"
             line = proxy_ts_url
         lines.append(line)
@@ -100,6 +100,9 @@ def proxy_ts():
             yield chunk
 
     response = Response(generate(), content_type='video/MP2T')
+    # Include content length if available to support HTML5 streaming
+    if 'Content-Length' in r.headers:
+        response.headers['Content-Length'] = r.headers['Content-Length']
     return set_cors_headers(response)
 
 if __name__ == '__main__':
