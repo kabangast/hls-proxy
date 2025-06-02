@@ -34,9 +34,13 @@ def set_cors_headers(response):
 @app.route('/proxy.m3u8')
 @app.route('/proxy')
 def proxy_playlist():
-    original_url = request.args.get("url")
-    if not original_url:
-        return "Missing 'url' parameter", 400
+    channel_id = request.args.get("id")
+    if not channel_id:
+        return "Missing 'id' parameter", 400
+
+    # Construct the full M3U8 URL based on the channel ID
+    # Example: uk_bts1 -> https://liveua.score806.cc/uk_bts1/tracks-v1a1/mono.m3u8
+    original_url = f"https://liveua.score806.cc/{channel_id}/tracks-v1a1/mono.m3u8"
 
     r = requests.get(original_url, headers=HEADERS)
     if r.status_code != 200:
