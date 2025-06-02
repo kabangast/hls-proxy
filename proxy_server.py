@@ -1,43 +1,34 @@
-from flask import Flask, request, Response, make_response, redirect
+from flask import Flask, request, Response, make_response
 import requests
 from urllib.parse import quote, unquote, urljoin
 import re
 
 app = Flask(__name__)
 
-# Custom headers to pass to origin servers
 HEADERS = {
     'Referer': 'https://play.ezyproxy.xyz/',
     'Origin': 'https://play.ezyproxy.xyz',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
 }
 
-# Token appended to key URI
 TOKEN = "xAXD9RCV"
 
-# Force HTTPS redirect for Render.com or similar platforms
 @app.before_request
-def redirect_to_https():
-    if request.headers.get('X-Forwarded-Proto', 'http') == 'http':
-        url = request.url.replace("http://", "https://", 1)
-        return redirect(url, code=301)
-
-# Handle CORS preflight requests
-@app.before_request
-def handle_options():
+def before_request():
     if request.method == 'OPTIONS':
         resp = app.make_default_options_response()
-        headers = resp.headers
-        headers['Access-Control-Allow-Origin'] = '*'
-        headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-        headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept'
-        return resp
+        return set_cors_headers(resp)
 
-# Add CORS headers to every response
+@app.after_request
+def add_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
 def set_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept'
+    response.headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept, Range'
+    response.headers['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range'
     return response
 
 @app.route('/proxy.m3u8')
@@ -52,7 +43,10 @@ def proxy_playlist():
         return f"Failed to fetch playlist ({r.status_code})", 502
 
     base_url = original_url.rsplit('/', 1)[0] + '/'
-    server_url = request.host_url.rstrip('/')
+    # Determine the correct scheme for proxy URLs, especially when behind a reverse proxy like on Render.
+    # Render sets X-Forwarded-Proto to 'https' for HTTPS requests.
+    scheme = request.headers.get('X-Forwarded-Proto', request.scheme)
+    server_url = f"{scheme}://{request.host}"
 
     lines = []
     for line in r.text.splitlines():
@@ -67,7 +61,7 @@ def proxy_playlist():
                 line = re.sub(r'URI="[^"]+"', f'URI="{proxy_key_url}"', line)
         elif line and not line.startswith("#"):
             ts_url = urljoin(base_url, line)
-            encoded_ts_url = quote(ts_url, safe=':/?&=')  # leave safe characters
+            encoded_ts_url = quote(ts_url, safe=':/?&=')
             proxy_ts_url = f"{server_url}/ts?url={encoded_ts_url}"
             line = proxy_ts_url
         lines.append(line)
@@ -109,6 +103,9 @@ def proxy_ts():
             yield chunk
 
     response = Response(generate(), content_type='video/MP2T')
+    # Include content length if available to support HTML5 streaming
+    if 'Content-Length' in r.headers:
+        response.headers['Content-Length'] = r.headers['Content-Length']
     return set_cors_headers(response)
 
 if __name__ == '__main__':
